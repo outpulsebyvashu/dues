@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e9e9e9">
+<title>Dues — Sign in</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/dues.css">
+<style>
+.wrap{max-width:440px;margin:0 auto;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));min-height:100vh;display:flex;flex-direction:column;justify-content:center;gap:14px}
+.brand{position:relative;background:var(--lime);color:var(--forest);border-radius:32px;padding:34px 20px 30px;text-align:center;overflow:hidden}
+body.dark .brand{background:var(--card);color:var(--ink)}
+.brand .star{position:absolute;right:-30px;top:-24px;width:170px;height:170px;pointer-events:none}
+.mark{display:inline-flex;gap:4px;align-items:flex-end;height:22px;margin-bottom:12px}
+.mark span{display:block;width:5px;border-radius:3px;background:var(--forest);animation:bar 2.4s ease-in-out infinite}
+body.dark .mark span{background:var(--lime)}
+.mark span:nth-child(1){height:20px}.mark span:nth-child(2){height:15px;animation-delay:.15s}.mark span:nth-child(3){height:10px;animation-delay:.3s}.mark span:nth-child(4){height:6px;animation-delay:.45s}.mark span:nth-child(5){height:4px;animation-delay:.6s}
+@keyframes bar{0%,100%{opacity:.55;transform:scaleY(.8)}50%{opacity:1;transform:scaleY(1)}}
+.app-name{font-size:44px;font-weight:300;letter-spacing:.02em;line-height:1}
+.app-sub{font-size:11px;letter-spacing:.24em;text-transform:uppercase;margin-top:10px;opacity:.75;font-weight:500}
+.panel-card{background:var(--card);border-radius:28px;padding:24px 18px 20px}
+.panel-card h1{font-size:22px;font-weight:400;letter-spacing:-.01em}
+.panel-card .sub{font-size:14px;color:var(--muted);margin:4px 0 18px}
+.pw-tabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.pw-tabs button{height:42px;border-radius:999px;background:var(--chip);font-size:14px;color:var(--ink)}
+.pw-tabs button.on{background:var(--lime);color:var(--forest);font-weight:500}
+.form .btn{height:50px;font-size:15px}
+.note{border:0;border-radius:20px;background:var(--chip);color:var(--muted);font-size:12px;line-height:1.6;text-align:center;padding:12px 16px;margin-top:16px;display:block;white-space:normal}
+.themefix{position:absolute;top:12px;right:12px;width:44px;height:44px;border-radius:50%;background:var(--card);color:var(--ink);display:flex;align-items:center;justify-content:center;z-index:2}
+body.dark .themefix{background:var(--chip)}
+.themefix svg{width:18px;height:18px}
+.foot a{color:var(--pos)}
+</style>
+</head>
+<body>
+<script>try{if(localStorage.getItem('dues_theme')==='dark')document.body.classList.add('dark')}catch(e){}</script>
+<div class="wrap">
+  <div class="brand">
+    <button class="themefix" id="themeBtn" type="button" aria-label="Switch theme"></button>
+    <svg class="star" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 0C55 30 70 45 100 50 70 55 55 70 50 100 45 70 30 55 0 50 30 45 45 30 50 0Z" fill="rgba(255,255,255,.3)"/></svg>
+    <div class="mark" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="app-name">DUES</div>
+    <div class="app-sub">Get paid · Follow-up on autopilot</div>
+  </div>
+
+  <div class="panel-card">
+    <h1 id="title">Welcome back</h1>
+    <p class="sub" id="sub">Sign in to see who owes you and who to remind today.</p>
+    <div class="pw-tabs" role="tablist">
+      <button type="button" id="tabIn" class="on" role="tab" aria-selected="true">Sign in</button>
+      <button type="button" id="tabUp" role="tab" aria-selected="false">Create account</button>
+    </div>
+    <form class="form" id="form" novalidate>
+      <label class="field" id="fName" hidden><span>Your name</span><input id="name" autocomplete="name" maxlength="60" placeholder="Vashudev"></label>
+      <label class="field" id="fBiz" hidden><span>Business name</span><input id="biz" autocomplete="organization" maxlength="80" placeholder="Shown on reminders and the pay page"></label>
+      <label class="field"><span>Username</span><input id="user" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="40" placeholder="you or you@business.com"></label>
+      <label class="field"><span>Password</span><input id="pass" type="password" autocomplete="current-password" maxlength="200" placeholder="At least 8 characters"></label>
+      <p class="err" id="err" role="alert"></p>
+      <button class="btn solid full" id="go" type="submit">Sign in</button>
+    </form>
+    <p class="note" id="note">Your invoices are private to your account. Passwords are stored as a salted hash, never in plain text.</p>
+  </div>
+  <p class="foot">Dues · by Outpulse</p>
+</div>
+<script src="/login.js"></script>
+</body>
+</html>

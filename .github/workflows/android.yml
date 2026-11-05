@@ -1,0 +1,53 @@
+name: Build Android app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Build the signed APK
+        working-directory: android
+        env:
+          APP_VERSION_CODE: ${{ github.run_number }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Name the APK
+        run: |
+          mkdir out
+          cp android/app/build/outputs/apk/release/app-release.apk out/Dues.apk
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dues-apk
+          path: out/Dues.apk
+
+      - name: Publish a release with the APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" out/Dues.apk \
+            --title "Dues 1.0.${{ github.run_number }}" \
+            --notes "Dues for Android. It opens the live Dues site, so web updates need no new APK." \
+            --latest

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e9e9e9">
+<title>Dues</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/dues.css">
+</head>
+<body>
+<script>try{if(localStorage.getItem('dues_theme')==='dark')document.body.classList.add('dark')}catch(e){}</script>
+<div class="app">
+  <header class="top">
+    <button class="avatar" id="avatar" type="button" aria-label="Your account" aria-haspopup="dialog">?</button>
+    <div class="hello">Hello, <b id="who">there</b></div>
+    <button class="round" id="searchBtn" type="button" aria-label="Search invoices and clients" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    </button>
+    <button class="round" id="themeBtn" type="button" aria-label="Switch theme"></button>
+    <button class="round" id="logoutBtn" type="button" aria-label="Sign out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+    </button>
+  </header>
+  <div class="searchbar" id="searchBar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search invoice number or client…" autocomplete="off" aria-label="Search">
+  </div>
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Sections">
+    <button class="tab on" role="tab" aria-selected="true" data-v="overview">Overview</button>
+    <button class="tab" role="tab" aria-selected="false" data-v="invoices">Invoices</button>
+    <button class="tab" role="tab" aria-selected="false" data-v="followups">Follow-ups <span class="n" id="fuN" hidden></span></button>
+    <button class="tab" role="tab" aria-selected="false" data-v="clients">Clients</button>
+    <button class="tab" role="tab" aria-selected="false" data-v="settings">Settings</button>
+  </nav>
+  <main id="view" aria-live="polite"><div class="bento"><div class="skeleton"></div><div class="skeleton"></div></div></main>
+  <p class="foot">Dues · Get paid without the awkward calls</p>
+</div>
+<div id="sheetRoot"></div>
+<div class="toast" id="toast" role="status"></div>
+<script src="/app.js"></script>
+</body>
+</html>

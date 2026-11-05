@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dues",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2025-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "dues", "database_id": "7828c42f-efaf-4892-aa3f-cf1b1ed4cc2d", "migrations_dir": "migrations" }
+  ],
+  "vars": {
+    "PUBLIC_URL": "https://dues.business-outpulsestudio.workers.dev"
+  },
+  // every morning at 8:00 India time: plan reminders for every account and send the email ones
+  "triggers": { "crons": ["30 2 * * *"] },
+  "observability": { "enabled": true }
+}

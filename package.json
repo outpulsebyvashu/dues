@@ -1,0 +1,17 @@
+{
+  "name": "dues",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Dues: follows up on unpaid invoices until they are paid (Cloudflare Workers + D1 + static assets)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "npm run schema && wrangler deploy",
+    "schema": "node scripts/make-schema.mjs",
+    "db:migrate": "wrangler d1 migrations apply dues --remote",
+    "test": "node tests/worker.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}
