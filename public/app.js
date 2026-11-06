@@ -42,18 +42,8 @@
   function initials(name) { var p = String(name || '?').trim().split(/\s+/); return esc(((p[0] || '?')[0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase()); }
   function ph(p) { p = String(p || ''); return /^\+91\d{10}$/.test(p) ? '+91 ' + p.slice(3, 8) + ' ' + p.slice(8) : p; }
   function plural(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }
-  function api(method, path, body) {
-    var o = { method: method, credentials: 'same-origin', headers: {} };
-    if (body !== undefined) { o.headers['Content-Type'] = 'application/json'; o.body = JSON.stringify(body); }
-    return fetch(path, o).then(function (r) {
-      return r.text().then(function (t) {
-        var d = null; try { d = t ? JSON.parse(t) : null; } catch (e) { }
-        if (r.status === 401) { location.replace('/login'); throw new Error('Please sign in.'); }
-        if (!r.ok) { var e = new Error((d && d.error) || 'Something went wrong. Try again.'); e.status = r.status; e.data = d; throw e; }
-        return d;
-      });
-    }, function () { throw new Error('No connection. Check your internet.'); });
-  }
+  // Everything is stored on this device (store.js answers the same requests the server used to).
+  function api(method, path, body) { return window.DuesAPI(method, path, body); }
   var tt = 0;
   function toast(m) { var t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(tt); tt = setTimeout(function () { t.classList.remove('show'); }, 2600); }
   function copy(text, done) {
@@ -61,7 +51,6 @@
     catch (e) { prompt('Copy this:', text); }
   }
   function waLink(phone, text) { return 'https://wa.me/' + String(phone || '').replace(/\D/g, '') + '?text=' + encodeURIComponent(text); }
-  function payUrl(token) { return location.origin + '/p/' + token; }
   var TONE = { gentle: ['Gentle', 'cat-t'], due: ['Due today', 'cat-k'], firm: ['Firm', 'cat-f'], final: ['Final', 'cat-f'] };
   var EVENTS = { created: 'Invoice created', reminder_sent: 'Reminder sent', promise: 'Promised to pay by', promise_missed: 'Promise missed', promise_cleared: 'Promise cleared',
     paid_part: 'Part payment received', paid_full: 'Paid in full', payment_removed: 'Payment removed', void: 'Voided', edited: 'Details edited', client_says_paid: 'Client says they paid', email_failed: 'Email could not be sent' };
@@ -93,8 +82,14 @@
   }
   function toggleTheme() { var d = document.body.classList.toggle('dark'); try { localStorage.setItem('dues_theme', d ? 'dark' : 'light'); } catch (e) { } paintTheme(); }
   $('#themeBtn').onclick = toggleTheme;
-  $('#logoutBtn').onclick = signOut;
-  function signOut() { api('POST', '/api/logout').then(function () { location.replace('/login'); }, function () { location.replace('/login'); }); }
+  var IS_ANDROID = !!window.DuesAndroid;
+  /* save a file: the Android app asks where to save it; a browser downloads it */
+  function saveFile(name, mime, text) {
+    if (IS_ANDROID) { window.DuesAndroid.save(name, mime, text); return; }
+    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name;
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  window.duesSaved = function (ok) { toast(ok ? 'Saved' : 'Not saved'); };
   $('#searchBtn').onclick = function () {
     var b = $('#searchBar'), open = !b.classList.contains('open');
     b.classList.toggle('open', open); this.setAttribute('aria-expanded', String(open));
@@ -255,6 +250,7 @@
         '<div class="two"><label class="field"><span>Amount (' + esc(cur()) + ')</span><input id="am" inputmode="decimal" placeholder="25,000" value="' + (editing ? cur0.amount : '') + '"></label>' +
         '<label class="field"><span>Invoice number</span><input id="no" maxlength="30" placeholder="Auto" value="' + (editing ? esc(cur0.number) : '') + '"></label></div>' +
         '<label class="field"><span>What it’s for</span><input id="ds" maxlength="300" placeholder="Brand identity, October retainer…" value="' + (editing ? esc(cur0.description) : '') + '"></label>' +
+        '<label class="field"><span>Online payment link (optional)</span><input id="rp" type="url" inputmode="url" maxlength="300" placeholder="https://rzp.io/… or PhonePe link" value="' + (editing ? esc(cur0.rp_link || '') : '') + '"><small>Paste a Razorpay, PhonePe or Cashfree link for card and netbanking. It goes into reminders and the pay page.</small></label>' +
         '<div class="two"><label class="field"><span>Issued</span><input id="is" type="date" value="' + (editing ? cur0.issued_on : today) + '"></label><label class="field"><span>Due</span><input id="du" type="date" value="' + (editing ? cur0.due_on : addDays(today, 15)) + '"></label></div>' +
         (editing ? '' : '<div class="filters" style="margin:0" id="terms">' + [7, 15, 30, 45].map(function (n) { return '<button type="button" data-t="' + n + '" class="' + (n === 15 ? 'on' : '') + '">' + n + ' days</button>'; }).join('') + '</div>') +
         '<p class="err" hidden></p><button class="btn solid full" type="submit" id="save">' + (editing ? 'Save changes' : 'Create invoice') + '</button></form>');
@@ -265,7 +261,7 @@
       if (terms) terms.onclick = function (e) { var b = e.target.closest('[data-t]'); if (!b) return; $$('[data-t]', terms).forEach(function (x) { x.classList.toggle('on', x === b); }); $('#du', card).value = addDays($('#is', card).value || today, +b.dataset.t); };
       $('#f', card).onsubmit = function (e) {
         e.preventDefault(); formErr(card, '');
-        var b = { amount: $('#am', card).value, number: $('#no', card).value.trim() || undefined, description: $('#ds', card).value.trim(), issued_on: $('#is', card).value, due_on: $('#du', card).value };
+        var b = { amount: $('#am', card).value, number: $('#no', card).value.trim() || undefined, description: $('#ds', card).value.trim(), rp_link: $('#rp', card).value.trim(), issued_on: $('#is', card).value, due_on: $('#du', card).value };
         if (!editing) { if (cid.value) b.client_id = cid.value; else { b.client_name = $('#cn', card).value.trim(); b.client_phone = $('#cp', card).value.trim(); b.client_email = $('#ce', card).value.trim(); if (!b.client_name) return formErr(card, 'Choose a client or type a name.'); } }
         if (!b.amount) return formErr(card, 'Enter the amount.');
         if (editing && !b.number) b.number = cur0.number;
@@ -279,7 +275,7 @@
 
   function openInvoice(id) {
     api('GET', '/api/invoices/' + id).then(function (d) {
-      var i = d.invoice, open = i.status === 'open', link = payUrl(i.pay_token);
+      var i = d.invoice, open = i.status === 'open', link = i.pay_url;
       var chips = i.status === 'paid' ? '<span class="chip">Paid ' + esc(dayY(i.paid_on)) + '</span>' : i.status === 'void' ? '<span class="chip g">Void</span>' : (i.overdue ? '<span class="chip o">' + i.late_days + ' days late</span>' : '<span class="chip g">Due ' + esc(dayY(i.due_on)) + '</span>');
       if (i.promised) chips += ' <span class="chip k">Promised ' + esc(day(i.promise_on)) + '</span>';
       var h = head(i.client_name, i.number + (i.description ? ' · ' + i.description : '')) +
@@ -306,10 +302,20 @@
         $('#pay', card).onclick = function () { paymentForm(i); };
         $('#promise', card).onclick = function () { promiseForm(i); };
         $('#plink', card).onclick = function () {
-          var c = sheet(head('Pay link', 'Your client opens this to pay ' + money(i.balance)) + '<div class="msg">' + esc(link) + '</div>' +
-            '<div class="sheet-actions"><button class="btn solid" type="button" id="cp">Copy link</button><a class="btn soft" href="' + esc(link) + '" target="_blank" rel="noopener">Open</a></div>' +
-            (ME.settings.upi ? '' : '<p class="lbl" style="margin-top:12px;line-height:1.5">Add your UPI ID in Settings so clients can pay in one tap from this page.</p>'));
-          $('#cp', c).onclick = function () { copy(link, 'Pay link copied'); };
+          var c;
+          if (link) {
+            c = sheet(head('Pay link', 'Your client opens this to pay ' + money(i.balance)) + '<div class="msg">' + esc(link) + '</div>' +
+              '<div class="sheet-actions"><button class="btn solid" type="button" id="cp">Copy link</button><a class="btn soft" href="' + esc(link) + '" target="_blank" rel="noopener">Open</a></div>' +
+              (ME.settings.upi ? '' : '<p class="lbl" style="margin-top:12px;line-height:1.5">Add your UPI ID in Settings so clients can pay in one tap from this page.</p>'));
+            $('#cp', c).onclick = function () { copy(link, 'Pay link copied'); };
+          } else {
+            c = sheet(head('Pay link', 'Clients can pay without a link too') +
+              '<p class="lbl" style="line-height:1.6">Reminders already include your UPI ID' + (ME.settings.upi ? ' (' + esc(ME.settings.upi) + ')' : '') + (i.rp_link ? ' and this invoice’s payment link' : '') + '.</p>' +
+              '<div class="panel"><div class="lbl">Want a pay page?</div><span style="font-size:13px;line-height:1.6">Upload the Dues folder to a free static host (Cloudflare Pages or Netlify Drop), then put its address in Settings → Pay page website. Every invoice then gets a link like your-site/pay.html.</span></div>' +
+              (ME.settings.upi ? '<div class="sheet-actions"><button class="btn solid" type="button" id="cp">Copy UPI ID</button></div>' : '<div class="sheet-actions"><button class="btn solid" type="button" id="toSet">Add UPI ID</button></div>'));
+            var cp = $('#cp', c); if (cp) cp.onclick = function () { copy(ME.settings.upi, 'UPI ID copied'); };
+            var ts = $('#toSet', c); if (ts) ts.onclick = function () { closeSheet(true); go('settings'); };
+          }
           onClose = function () { openInvoice(i.id); };
         };
       }
@@ -392,8 +398,7 @@
     api('GET', '/api/followups').then(function (F) {
       setFuCount(F.followups.length);
       if (view !== 'followups') return;
-      var emails = F.followups.filter(function (f) { return f.channel === 'email' && f.client_email; }).length;
-      var h = '<div class="list-h"><h2>Today’s follow-ups</h2><span class="chip">' + F.followups.length + '</span><span class="grow"></span>' + (ME.email_ready && emails ? '<button class="btn solid sm" type="button" id="sendAll">Send ' + plural(emails, 'email') + '</button>' : '') + '</div>';
+      var h = '<div class="list-h"><h2>Today’s follow-ups</h2><span class="chip">' + F.followups.length + '</span><span class="grow"></span>' + '' + '</div>';
       h += F.missed_promises.map(function (m) {
         return '<div class="alert"><span class="ic">' + I.alert + '</span><div class="tx"><b>' + esc(m.client_name) + ' missed their promise</b><span>' + esc(m.number) + ' · promised ' + esc(day(m.promise_on)) + ' · ' + money(m.amount - m.paid) + '</span></div><button class="go" type="button" data-inv="' + esc(m.id) + '" aria-label="Open invoice">' + I.arrow + '</button></div>';
       }).join('');
@@ -417,7 +422,6 @@
       });
       $$('[data-copy]').forEach(function (b) { b.onclick = function () { copy(byId[b.dataset.copy].message, 'Message copied'); }; });
       $$('[data-skip]').forEach(function (b) { b.onclick = function () { api('POST', '/api/followups/' + b.dataset.skip + '/skip').then(function () { var c = $('[data-fid="' + b.dataset.skip + '"]'); if (c) c.remove(); setFuCount(Math.max(0, FU_COUNT - 1)); toast('Skipped'); }).catch(function (x) { toast(x.message); }); }; });
-      var sa = $('#sendAll'); if (sa) sa.onclick = function () { sa.disabled = true; api('POST', '/api/followups/send-email').then(function (d) { toast(plural(d.sent, 'email') + ' sent'); followups(); }).catch(function (x) { sa.disabled = false; toast(x.message); }); };
       bindCommon();
     }).catch(fail);
   }
@@ -489,30 +493,32 @@
       var s = d.settings;
       var h = '<div class="bento">';
       h += '<section class="card" style="grid-column:1/-1"><div class="ch"><span class="ic">' + I.user + '</span><h2>Your business</h2></div><form class="form" id="biz" novalidate>' +
-        '<div class="two"><label class="field"><span>Business name</span><input id="bn" maxlength="80" value="' + esc(s.business) + '" placeholder="Shown on reminders"></label>' +
-        '<label class="field"><span>UPI ID</span><input id="up" maxlength="60" value="' + esc(s.upi) + '" placeholder="yourname@okhdfcbank" autocapitalize="none"></label></div>' +
-        '<div class="two"><label class="field"><span>Your phone (shown on the pay page)</span><input id="ph" type="tel" maxlength="20" value="' + esc(s.phone) + '"></label>' +
-        '<label class="field"><span>Your email (replies go here)</span><input id="em" type="email" maxlength="120" value="' + esc(s.email) + '"></label></div>' +
+        '<div class="two"><label class="field"><span>Your name</span><input id="nm" maxlength="60" value="' + esc(d.user.name) + '"></label>' +
+        '<label class="field"><span>Business name</span><input id="bn" maxlength="80" value="' + esc(s.business) + '" placeholder="Shown on reminders"></label></div>' +
+        '<div class="two"><label class="field"><span>UPI ID</span><input id="up" maxlength="60" value="' + esc(s.upi) + '" placeholder="yourname@okhdfcbank" autocapitalize="none"></label>' +
+        '<label class="field"><span>Your WhatsApp number</span><input id="ph" type="tel" maxlength="20" value="' + esc(s.phone) + '" placeholder="Clients reply here"></label></div>' +
+        '<div class="two"><label class="field"><span>Your email</span><input id="em" type="email" maxlength="120" value="' + esc(s.email) + '"></label>' +
+        '<label class="field"><span>Pay page website (optional)</span><input id="st" type="url" inputmode="url" maxlength="300" value="' + esc(s.site) + '" placeholder="https://dues-yourname.pages.dev" autocapitalize="none"></label></div>' +
+        '<p class="lbl" style="line-height:1.5">With a website, every reminder carries a pay page link. Without one, reminders include your UPI ID.</p>' +
         '<p class="err" hidden></p><button class="btn solid" type="submit">Save</button></form></section>';
       h += '<section class="card" style="grid-column:1/-1"><div class="ch"><span class="ic">' + I.clock + '</span><h2>Reminder schedule</h2></div>' +
-        '<p class="lbl" style="line-height:1.5;margin:-6px 0 14px">Days from the due date: −3 is three days before, 0 is the due date, 7 is a week late. Each invoice gets one message per step, and stops when it is paid or a promise is made.</p>' +
+        '<p class="lbl" style="line-height:1.5;margin:-6px 0 14px">Days from the due date: −3 is three days before, 0 is the due date, 7 is a week late. Each invoice gets one message per step, and stops when it is paid or a promise is made. Dues lines them up whenever you open it.</p>' +
         '<div class="form" id="steps"></div><div class="sheet-actions"><button class="btn soft sm" type="button" id="addStep">Add step</button></div>' +
-        '<div class="section-h">Messages</div><p class="lbl" style="line-height:1.5;margin:-4px 2px 12px">Use {client}, {amount}, {number}, {due}, {late}, {link} and {business}.</p><div class="form">' +
+        '<div class="section-h">Messages</div><p class="lbl" style="line-height:1.5;margin:-4px 2px 12px">Use {client}, {amount}, {number}, {due}, {late}, {pay} (pay link or UPI ID) and {business}.</p><div class="form">' +
         ['gentle', 'due', 'firm', 'final'].map(function (t) { return '<label class="field"><span>' + (TONE[t] || TONE.firm)[0] + ' · ' + TONE_HELP[t] + '</span><textarea data-tpl="' + t + '" rows="3" maxlength="600">' + esc(s.templates[t]) + '</textarea></label>'; }).join('') +
         '<p class="err" id="schErr" hidden></p><button class="btn solid" type="button" id="saveSch">Save schedule</button></div></section>';
-      h += '<section class="card c-donut"><div class="ch"><span class="ic">' + I.plug + '</span><h2>Connections</h2></div>' +
+      h += '<section class="card c-donut"><div class="ch"><span class="ic">' + I.list + '</span><h2>Your data</h2></div>' +
+        '<p class="lbl" style="line-height:1.5;margin:-6px 0 14px">Everything is saved on this phone only. Back it up now and then, and before you change phones or clear the browser.</p>' +
+        '<div class="form"><button class="btn solid full" type="button" id="bk">Back up</button><button class="btn soft full" type="button" id="csvOut">Export invoices (CSV)</button>' +
+        '<label class="btn ghost full" style="cursor:pointer">Restore a backup<input id="rsFile" type="file" accept=".json,application/json" hidden></label>' +
+        '<button class="btn danger full" type="button" id="erase">Erase everything</button></div></section>';
+      h += '<section class="card c-bars"><div class="ch"><span class="ic">' + I.plug + '</span><h2>How it sends</h2></div>' +
         '<div class="status-line"><span class="chip">On</span><span class="tx">WhatsApp<small>Opens WhatsApp with the message ready. You tap send.</small></span></div>' +
-        '<div class="status-line"><span class="chip' + (d.email_ready ? '' : ' g') + '">' + (d.email_ready ? 'On' : 'Off') + '</span><span class="tx">Automatic email<small>' + (d.email_ready ? 'Email reminders go out every morning.' : 'Add RESEND_API_KEY and EMAIL_FROM in Cloudflare to send emails by themselves.') + '</small></span></div>' +
-        '<div class="status-line"><span class="chip' + (d.razorpay_ready ? '' : ' g') + '">' + (d.razorpay_ready ? 'On' : 'Off') + '</span><span class="tx">Razorpay<small>' + (d.razorpay_ready ? 'Each invoice gets a card/netbanking link; paid links close the invoice.' : 'Optional. Add your Razorpay keys in Cloudflare for card and netbanking.') + '</small></span></div>' +
-        '<div class="status-line"><span class="chip' + (s.upi ? '' : ' g') + '">' + (s.upi ? 'On' : 'Off') + '</span><span class="tx">UPI on the pay page<small>' + (s.upi ? esc(s.upi) : 'Add your UPI ID above.') + '</small></span></div></section>';
-      h += '<section class="card c-bars"><div class="ch"><span class="ic">' + I.gear + '</span><h2>Account</h2></div><form class="form" id="acc" novalidate>' +
-        '<label class="field"><span>Your name</span><input id="nm" maxlength="60" value="' + esc(d.user.name) + '"></label>' +
-        '<label class="field"><span>Current password</span><input id="op" type="password" autocomplete="current-password" placeholder="Only to change password"></label>' +
-        '<label class="field"><span>New password</span><input id="np" type="password" autocomplete="new-password" placeholder="At least 8 characters"></label>' +
-        '<p class="err" hidden></p><div class="sheet-actions"><button class="btn solid" type="submit">Save</button><button class="btn soft" type="button" id="so">Sign out</button></div>' +
-        '<p class="lbl" style="margin-top:6px">Signed in as ' + esc(d.user.username) + '</p></form></section>';
+        '<div class="status-line"><span class="chip">On</span><span class="tx">Email<small>Opens your email app with the message ready.</small></span></div>' +
+        '<div class="status-line"><span class="chip' + (s.upi ? '' : ' g') + '">' + (s.upi ? 'On' : 'Off') + '</span><span class="tx">UPI<small>' + (s.upi ? esc(s.upi) : 'Add your UPI ID above so clients can pay straight away.') + '</small></span></div>' +
+        '<div class="status-line"><span class="chip' + (s.site ? '' : ' g') + '">' + (s.site ? 'On' : 'Off') + '</span><span class="tx">Pay page<small>' + (s.site ? esc(s.site) : 'Optional. Upload this folder to a free static host and add its address above.') + '</small></span></div></section>';
       h += '<section class="card c-recent"><div class="ch"><span class="ic">' + I.sun + '</span><h2>Appearance</h2></div><div class="seg"><button type="button" data-th="light" class="' + (document.body.classList.contains('dark') ? '' : 'on') + '">Light</button><button type="button" data-th="dark" class="' + (document.body.classList.contains('dark') ? 'on' : '') + '">Dark</button></div>' +
-        '<p class="lbl" style="margin-top:14px;line-height:1.5">Install Dues on your phone: open the browser menu and choose Add to Home screen.</p></section>';
+        (IS_ANDROID ? '' : '<p class="lbl" style="margin-top:14px;line-height:1.5">Install Dues on your phone: open the browser menu and choose Add to Home screen.</p>') + '</section>';
       h += '</div>';
       $('#view').innerHTML = h;
       var steps = s.steps.map(function (x) { return { days: x.days, tone: x.tone }; });
@@ -533,25 +539,62 @@
       };
       $('#biz').onsubmit = function (ev) {
         ev.preventDefault(); var card = $('#biz'); formErr(card, '');
-        api('PUT', '/api/settings', { business: $('#bn').value, upi: $('#up').value.trim(), phone: $('#ph').value, email: $('#em').value }).then(function (r) { ME.settings = r.settings; toast('Saved'); }).catch(function (x) { formErr(card, x.message); });
+        var name = $('#nm').value.trim(); if (!name) return formErr(card, 'Enter your name.');
+        api('PATCH', '/api/me', { name: name }).then(function () { return api('PUT', '/api/settings', { business: $('#bn').value, upi: $('#up').value.trim(), phone: $('#ph').value, email: $('#em').value, site: $('#st').value.trim() }); })
+          .then(function (r) { ME.settings = r.settings; paintUser(name); toast('Saved'); }).catch(function (x) { formErr(card, x.message); });
       };
-      $('#acc').onsubmit = function (ev) {
-        ev.preventDefault(); var card = $('#acc'); formErr(card, ''); var b = { name: $('#nm').value.trim() };
-        if ($('#np').value) { b.password = $('#op').value; b.new_password = $('#np').value; }
-        api('PATCH', '/api/me', b).then(function () { $('#op').value = $('#np').value = ''; toast('Saved'); paintUser(b.name); }).catch(function (x) { formErr(card, x.message); });
+      $('#bk').onclick = function () { api('GET', '/api/backup').then(function (b) { saveFile('dues-backup-' + todayIst() + '.json', 'application/json', JSON.stringify(b)); }); };
+      $('#csvOut').onclick = function () {
+        api('GET', '/api/invoices?status=all').then(function (d2) {
+          var q = function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+          var rows = [['number', 'client', 'phone', 'email', 'description', 'amount', 'paid', 'balance', 'issued', 'due', 'status', 'paid_on', 'promise_on']].concat(d2.invoices.map(function (i) {
+            return [i.number, i.client_name, i.client_phone, i.client_email, i.description, i.amount, i.paid, i.balance, i.issued_on, i.due_on, i.status, i.paid_on || '', i.promise_on || ''];
+          }));
+          saveFile('dues-invoices-' + todayIst() + '.csv', 'text/csv', rows.map(function (r) { return r.map(q).join(','); }).join('\n'));
+        });
       };
-      $('#so').onclick = signOut;
+      $('#rsFile').onchange = function () {
+        var f = this.files[0]; if (!f) return; var rd = new FileReader();
+        rd.onload = function () {
+          var b; try { b = JSON.parse(rd.result); } catch (e) { return toast('That file is not a Dues backup.'); }
+          api('POST', '/api/restore', b).then(function (r) { toast('Restored ' + plural(r.invoices, 'invoice')); return api('GET', '/api/me'); }).then(function (m) { ME = m; paintUser(); go('overview'); }).catch(function (x) { toast(x.message); });
+        };
+        rd.readAsText(f);
+      };
+      $('#erase').onclick = function () {
+        var b = $('#erase');
+        if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Tap again to erase everything'; return; }
+        api('POST', '/api/erase').then(function () { toast('Erased'); return api('GET', '/api/me'); }).then(function (m) { ME = m; paintUser(); go('overview'); welcome(); });
+      };
       $$('[data-th]').forEach(function (b) { b.onclick = function () { var want = b.dataset.th === 'dark'; if (want !== document.body.classList.contains('dark')) toggleTheme(); $$('[data-th]').forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
     }).catch(fail);
   }
 
   /* ───────── account sheet ───────── */
-  function paintUser(name) { ME.user.name = name || ME.user.name; $('#who').textContent = (ME.user.name || '').split(' ')[0] || 'there'; $('#avatar').textContent = initials(ME.user.name); }
+  function paintUser(name) { if (name) ME.user.name = name; $('#who').textContent = (ME.user.name || '').split(' ')[0] || 'there'; $('#avatar').textContent = ME.user.name ? initials(ME.user.name) : '?'; }
   function accountSheet() {
-    var card = sheet('<div class="sheet-top"><div class="avatar" aria-hidden="true">' + initials(ME.user.name) + '</div><div class="sheet-who"><b>' + esc(ME.user.name) + '</b><span>' + esc(ME.user.username) + '</span>' +
+    var card = sheet('<div class="sheet-top"><div class="avatar" aria-hidden="true">' + initials(ME.user.name) + '</div><div class="sheet-who"><b>' + esc(ME.user.name || 'You') + '</b><span>Saved on this device</span>' +
       (ME.settings.business ? '<span class="chip" style="align-self:flex-start;margin-top:4px">' + esc(ME.settings.business) + '</span>' : '') + '</div><button class="x" type="button" data-close aria-label="Close">' + I.x + '</button></div>' +
-      '<div class="sheet-actions"><button class="btn ghost" type="button" id="st">Switch theme</button><button class="btn soft" type="button" id="sg">Settings</button><button class="btn solid" type="button" id="so">Sign out</button></div>');
-    $('#st', card).onclick = toggleTheme; $('#sg', card).onclick = function () { closeSheet(true); go('settings'); }; $('#so', card).onclick = signOut;
+      '<div class="sheet-actions"><button class="btn ghost" type="button" id="st">Switch theme</button><button class="btn soft" type="button" id="sg">Settings</button><button class="btn solid" type="button" id="bk">Back up</button></div>');
+    $('#st', card).onclick = toggleTheme; $('#sg', card).onclick = function () { closeSheet(true); go('settings'); };
+    $('#bk', card).onclick = function () { api('GET', '/api/backup').then(function (b) { saveFile('dues-backup-' + todayIst() + '.json', 'application/json', JSON.stringify(b)); }); };
+  }
+
+  /* ───────── first run ───────── */
+  function welcome() {
+    var card = sheet('<div class="sheet-top"><div class="sheet-who"><b>Welcome to Dues</b><span>Get paid without the awkward calls</span></div></div>' +
+      '<p class="lbl" style="line-height:1.6;margin:-6px 0 14px">Add an invoice and Dues lines up polite WhatsApp or email reminders before and after the due date, until it is paid. Everything stays on this phone.</p>' +
+      '<form class="form" id="wf" novalidate><label class="field"><span>Your name</span><input id="wn" maxlength="60" autocomplete="name" placeholder="Vashudev"></label>' +
+      '<label class="field"><span>Business name</span><input id="wb" maxlength="80" autocomplete="organization" placeholder="Shown on reminders"></label>' +
+      '<label class="field"><span>UPI ID</span><input id="wu" maxlength="60" autocapitalize="none" placeholder="yourname@okhdfcbank"><small>Clients see it in reminders so they can pay straight away. You can add it later.</small></label>' +
+      '<p class="err" hidden></p><button class="btn solid full" type="submit">Start</button></form>');
+    $('#wf', card).onsubmit = function (e) {
+      e.preventDefault(); formErr(card, '');
+      var name = $('#wn', card).value.trim(); if (!name) return formErr(card, 'Enter your name.');
+      api('PUT', '/api/settings', { business: $('#wb', card).value, upi: $('#wu', card).value.trim() })
+        .then(function () { return api('PATCH', '/api/me', { name: name }); }).then(function () { return api('GET', '/api/me'); })
+        .then(function (m) { ME = m; paintUser(); closeSheet(true); render(); }).catch(function (x) { formErr(card, x.message); });
+    };
   }
 
   /* ───────── start ───────── */
@@ -560,6 +603,7 @@
     ME = d; paintUser();
     var h = (location.hash || '').slice(1);
     go(['overview', 'invoices', 'followups', 'clients', 'settings'].indexOf(h) > -1 ? h : 'overview');
-  }).catch(function (e) { if (e.message !== 'Please sign in.') fail(e); });
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('/sw.js').catch(function () { });
+    if (!d.setup_done) welcome();
+  }).catch(fail);
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !IS_ANDROID) navigator.serviceWorker.register('sw.js').catch(function () { });
 })();

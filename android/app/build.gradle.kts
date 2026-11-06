@@ -13,8 +13,14 @@ android {
         targetSdk = 34
         versionCode = (System.getenv("APP_VERSION_CODE") ?: "1").toInt()
         versionName = "1.0." + (System.getenv("APP_VERSION_CODE") ?: "1")
-        // The app opens the live site, so web updates reach the app without a new APK.
-        buildConfigField("String", "START_URL", "\"" + (System.getenv("DUES_URL") ?: "https://dues.business-outpulsestudio.workers.dev/app") + "\"")
+        // The Dues web app is built into the APK (public/ → assets) and served from a private https address, so it works with no website and offline.
+        buildConfigField("String", "START_URL", "\"https://appassets.androidplatform.net/assets/app.html\"")
+    }
+
+    sourceSets {
+        getByName("main") {
+            assets.srcDirs("../../public")
+        }
     }
 
     buildFeatures {
@@ -54,4 +60,5 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-ktx:1.9.1")
+    implementation("androidx.webkit:webkit:1.11.0")
 }

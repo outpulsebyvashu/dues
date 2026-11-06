@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
-import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -13,6 +12,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebResourceResponse
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -30,11 +31,14 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
+import androidx.webkit.WebViewAssetLoader
 
 /**
- * Dues for Android: a native shell around the live Dues web app, so the design is the web app's own and updates need no new APK.
- * Native parts: links to WhatsApp, UPI apps, the dialer and email open in those apps; the file picker for CSV import;
- * the back button closes sheets first; an offline screen; the status and navigation bars follow the app's light/dark theme.
+ * Dues for Android. The Dues web app (public/) is built into the APK and served from a private https address
+ * (WebViewAssetLoader), so it works offline and needs no website; invoices are saved on the phone (WebView storage).
+ * Native parts: WhatsApp, UPI apps, the dialer and email open in those apps; the file picker (CSV import, restore);
+ * saving backups and CSV exports through Android's save dialog; the back button closes sheets first;
+ * the status and navigation bars follow the app's light/dark theme.
  */
 class MainActivity : ComponentActivity() {
 
@@ -46,6 +50,34 @@ class MainActivity : ComponentActivity() {
     private var failed = false
     private var lastBg = 0
     private val handler = Handler(Looper.getMainLooper())
+    private lateinit var assets: WebViewAssetLoader
+    private var pendingSave: String? = null
+
+    private val savePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val text = pendingSave
+        pendingSave = null
+        val uri = result.data?.data
+        var ok = false
+        if (result.resultCode == RESULT_OK && uri != null && text != null) {
+            ok = try {
+                contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                true
+            } catch (e: Exception) { false }
+        }
+        if (result.resultCode == RESULT_OK) web.evaluateJavascript("window.duesSaved && window.duesSaved($ok)", null)
+    }
+
+    /** Called from the page: Android asks where to save the backup or CSV. */
+    inner class Bridge {
+        @JavascriptInterface
+        fun save(name: String, mime: String, text: String) {
+            runOnUiThread {
+                pendingSave = text
+                val i = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(mime).putExtra(Intent.EXTRA_TITLE, name)
+                try { savePicker.launch(i) } catch (e: ActivityNotFoundException) { Toast.makeText(this@MainActivity, "Can't save files on this phone", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
 
     private val filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.resultCode, result.data))
@@ -57,6 +89,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         host = Uri.parse(BuildConfig.START_URL).host ?: ""
+        assets = WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
 
         web = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
@@ -75,11 +108,15 @@ class MainActivity : ComponentActivity() {
             allowFileAccess = false
             allowContentAccess = false
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            userAgentString = "$userAgentString DuesApp/1.0"
+            userAgentString = "$userAgentString DuesApp/2.0"
             setSupportZoom(false)
             builtInZoomControls = false
         }
+        // only the built-in Dues pages ever run in this WebView (every other link opens outside), so the bridge is safe to expose
+        web.addJavascriptInterface(Bridge(), "DuesAndroid")
         web.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? = assets.shouldInterceptRequest(request.url)
+
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
                 val s = u.scheme ?: ""
@@ -153,14 +190,7 @@ class MainActivity : ComponentActivity() {
     private fun load() {
         failed = false
         offline.visibility = View.GONE
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        @Suppress("DEPRECATION")
-        if (cm.activeNetworkInfo?.isConnected != true) {
-            offline.visibility = View.VISIBLE
-            offline.bringToFront()
-            return
-        }
-        web.loadUrl(BuildConfig.START_URL)
+        web.loadUrl(BuildConfig.START_URL)   // built into the app: no internet needed
     }
 
     private fun buildOfflineView(): LinearLayout {

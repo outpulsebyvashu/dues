@@ -1,81 +1,59 @@
 # Dues
 ### Get paid without the awkward calls
 
-Dues follows up on unpaid invoices until they are paid. It reminds clients on WhatsApp or email before and after the due date, gives every invoice a pay page (UPI in one tap, Razorpay optional), pauses when a client promises to pay, and stops as soon as the money comes in.
+Dues follows up on unpaid invoices until they are paid. It lines up WhatsApp or email reminders before and after the due date,
+gives every invoice a way to pay (UPI in one tap, or a Razorpay/PhonePe link you paste), pauses when a client promises to pay,
+and stops as soon as the money comes in.
 
-Same design language as Manifold: lime and forest, Outfit, rounded cards, pill buttons, bento grid, light and dark, mobile first.
+**Static version:** no server, no account, no Workers. Plain HTML/CSS/JS files. Your data is saved on the device (browser storage)
+and you can back it up to a file. The server version (Cloudflare Worker + D1) is kept on the `server-v1` branch for later.
+
+Design: the Manifold design language (lime and forest, Outfit, rounded cards, pill buttons, bento grid, light and dark, mobile first).
 
 ---
+
+## Use it
+
+- **Android app:** install `Dues.apk` (from Releases). The app has the Dues pages built in, so it works offline and needs no website.
+- **Browser:** open `public/app.html` from any static host (Cloudflare Pages, Netlify Drop, GitHub Pages), then Add to Home screen.
+
+Data on the phone app and data in a browser are separate. Move it with **Settings → Back up** and **Restore a backup**.
 
 ## What's inside
 
 | Screen | What it does |
 |---|---|
 | Overview | Outstanding and overdue, collected this month, collection rate, ageing (not due, 1–30, 31–60, 61–90, 90+ days), today's reminders, missed promises, 4-week forecast, recent activity |
-| Invoices | Open, overdue, promised, paid and void; new invoice in one sheet; CSV import (Excel, Tally, Zoho, Google Sheets); record full or part payments; promise to pay; pay link; edit; void; full history |
-| Follow-ups | Today's reminders with the message ready: one tap opens WhatsApp or email; copy; skip. Email reminders can send themselves |
+| Invoices | Open, overdue, promised, paid, void; new invoice in one sheet; CSV import (Excel, Tally, Zoho, Google Sheets); full or part payments; promise to pay; pay link; edit; void; history |
+| Follow-ups | Today's reminders with the message ready: one tap opens WhatsApp or your email app; copy; skip |
 | Clients | What each client owes, how late, and how many days they usually take to pay |
-| Settings | Business name, UPI ID, reminder schedule (days before or after the due date, with a gentle, due, firm or final message), message templates, connections, account, theme |
-| Pay page `/p/<code>` | Public page for the client: amount, Pay with UPI app, UPI ID, Razorpay link, "I've paid" with a UTR |
+| Settings | Your name and business, UPI ID, WhatsApp number, pay page website, reminder schedule and messages, back up / restore / export CSV / erase, theme |
+| Pay page `pay.html#…` | Client page with amount, Pay with UPI app, UPI ID, online payment link, "I've paid" (messages you on WhatsApp) |
 
-### How reminders work
-- The schedule is a list of steps in days from the due date (default −3, 0, +3, +7, +15).
-- Each invoice gets **one** message per step. If an old invoice is imported, only the newest step is sent, not every missed one.
-- A promise to pay pauses reminders until the promised day. If the day passes unpaid, Dues flags it and starts again.
-- Paying in full (recorded, or through Razorpay) closes the invoice and cancels its pending reminders.
-- Every morning at 8:00 India time a scheduled job plans reminders for every account and sends the email ones.
+### Reminders
+- The schedule is a list of steps in days from the due date (default −3, 0, +3, +7, +15). Each invoice gets one message per step.
+  An old invoice that is imported gets only the newest step, not every missed one.
+- Dues works out who to remind each time you open it. WhatsApp and email open with the message ready; you tap send.
+- A promise to pay pauses reminders until that date. If it passes unpaid, Dues flags it and starts again.
+- Recording full payment closes the invoice and cancels its reminders.
 
----
-
-## Deploy (Cloudflare Workers + D1)
-
-Everything runs on one Worker with static assets and a D1 database, like Manifold.
-
-```bash
-npm install
-npx wrangler login
-npx wrangler secret put SESSION_SECRET      # a long random string (40+ characters)
-npm run deploy
-```
-
-The D1 database `dues` is already in `wrangler.jsonc`. Tables are created on the first request (and by `npm run db:migrate`).
-
-Or connect this repository in the Cloudflare dashboard (Workers & Pages → the `dues` Worker → Settings → Builds → Connect to Git), the same way Manifold deploys.
-
-### Optional secrets
-| Secret | Turns on |
-|---|---|
-| `RESEND_API_KEY` + `EMAIL_FROM` (e.g. `Dues <dues@outpulse.company>`) | Email reminders that send themselves |
-| `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET` | A card / netbanking payment link on every invoice |
-| `RAZORPAY_WEBHOOK_SECRET` | Razorpay closes the invoice when the client pays (webhook URL: `/api/razorpay/webhook`, event `payment_link.paid`) |
-| `SIGNUP` = `closed` (variable) | Stops new accounts being created |
-
-WhatsApp reminders open WhatsApp with the message ready; you tap send. (Sending without a tap needs the WhatsApp Business API.)
+### Pay page
+With no server, the invoice details (business, number, amount, due date, UPI ID, payment link, your phone) are put inside the link
+itself, after the `#`. To give clients a pay page, upload `public/` to a free static host and put its address in Settings →
+Pay page website. Without a website, reminders simply include your UPI ID and any payment link you added.
 
 ---
 
-## Android app
+## Put it on a free static host (optional, for pay links)
+- **Cloudflare Pages:** dash.cloudflare.com → Workers & Pages → Create → Pages → Upload assets → upload the `public` folder (or `dues-static.zip`).
+- **Netlify Drop:** app.netlify.com/drop → drop the `public` folder.
 
-`android/` is a native Kotlin shell around the live site, like the Niro apps: WhatsApp, UPI apps, the dialer and email open in their own apps, the back button closes sheets first, and there is an offline screen.
-Every push to `main` that changes `android/` builds a signed APK in GitHub Actions and publishes it as a release (`Dues.apk`).
-
-`dues-sideload.jks` is a sideload key kept in the repo so every build can update the previous one. Before publishing to Google Play, make a new private upload key and keep it out of the repo.
-
-You can also install the web app directly: open it in Chrome → menu → Add to Home screen.
-
----
+No build step, no settings, no secrets.
 
 ## Develop and test
-
 ```bash
-npm test                 # about 25 checks against SQLite (Node 22.7+, no installs)
-npm run schema           # after changing migrations/: regenerates src/schema.mjs
-node scripts/bundle.mjs  # one-file build (dist/worker.mjs) with the static files inside, for uploading without wrangler
+npm test          # on-device store tests (Node 20+, no installs)
+npm run serve     # http://localhost:8080/app.html
 ```
-
-## Security
-- Passwords: PBKDF2-SHA256 (100,000 rounds) with a random salt; sign-in is limited to 8 tries per 15 minutes.
-- Sessions: signed, HttpOnly, Secure, SameSite cookie (`__Host-dues`), 30 days.
-- Every query is limited to the signed-in account; another account's invoice answers 404.
-- Cross-site writes are refused; a strict Content-Security-Policy is sent on every page.
-- The pay page shows only the amount, invoice number, business name and payment details: no client phone or email.
+The Android app (`android/`) is built by GitHub Actions on every push that changes `public/` or `android/`, and published as a release.
+`dues-sideload.jks` is a sideload key in the repo so each build can update the last one; make a private key before publishing to Google Play.
