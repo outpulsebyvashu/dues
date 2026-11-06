@@ -13,4 +13,5 @@ jobs:
         with:
           node-version: "22"
       - run: node tests/store.test.mjs
+      - run: node tests/security.test.mjs
       - run: for f in public/*.js; do node --check "$f"; done

@@ -1,4 +1,4 @@
-/* Dues app: Overview, Invoices, Follow-ups, Clients, Settings. Talks only to /api on the same site (cookie session). */
+/* Dues app: Overview, Invoices, Follow-ups, Clients, Settings. Talks only to DuesAPI (store.js); gate.js unlocks it first. */
 (function () {
   'use strict';
   var $ = function (s, r) { return (r || document).querySelector(s); };
@@ -73,6 +73,7 @@
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSheet(); });
   function head(title, sub) { return '<div class="sheet-top"><div class="sheet-who"><b>' + esc(title) + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</div><button class="x" type="button" data-close aria-label="Close">' + I.x + '</button></div>'; }
   function formErr(card, msg) { var e = $('.err', card); if (e) { e.textContent = msg; e.hidden = !msg; } else toast(msg); }
+  window.DuesUI = { sheet: sheet, closeSheet: closeSheet, head: head, toast: function (m) { toast(m); }, formErr: formErr };
 
   /* ───────── shell ───────── */
   function paintTheme() {
@@ -491,7 +492,7 @@
     api('GET', '/api/me').then(function (d) {
       ME = d; if (view !== 'settings') return;
       var s = d.settings;
-      var h = '<div class="bento">';
+      var h = '<div class="bento">' + window.DuesGate.settingsHtml();
       h += '<section class="card" style="grid-column:1/-1"><div class="ch"><span class="ic">' + I.user + '</span><h2>Your business</h2></div><form class="form" id="biz" novalidate>' +
         '<div class="two"><label class="field"><span>Your name</span><input id="nm" maxlength="60" value="' + esc(d.user.name) + '"></label>' +
         '<label class="field"><span>Business name</span><input id="bn" maxlength="80" value="' + esc(s.business) + '" placeholder="Shown on reminders"></label></div>' +
@@ -508,7 +509,7 @@
         ['gentle', 'due', 'firm', 'final'].map(function (t) { return '<label class="field"><span>' + (TONE[t] || TONE.firm)[0] + ' · ' + TONE_HELP[t] + '</span><textarea data-tpl="' + t + '" rows="3" maxlength="600">' + esc(s.templates[t]) + '</textarea></label>'; }).join('') +
         '<p class="err" id="schErr" hidden></p><button class="btn solid" type="button" id="saveSch">Save schedule</button></div></section>';
       h += '<section class="card c-donut"><div class="ch"><span class="ic">' + I.list + '</span><h2>Your data</h2></div>' +
-        '<p class="lbl" style="line-height:1.5;margin:-6px 0 14px">Everything is saved on this phone only. Back it up now and then, and before you change phones or clear the browser.</p>' +
+        '<p class="lbl" style="line-height:1.5;margin:-6px 0 14px">' + (window.DuesGate.signedIn() ? 'Saved encrypted on this phone and synced to your account. A backup file is still handy to keep.' : 'Saved encrypted on this phone only. Back it up now and then, and before you change phones or clear the browser.') + '</p>' +
         '<div class="form"><button class="btn solid full" type="button" id="bk">Back up</button><button class="btn soft full" type="button" id="csvOut">Export invoices (CSV)</button>' +
         '<label class="btn ghost full" style="cursor:pointer">Restore a backup<input id="rsFile" type="file" accept=".json,application/json" hidden></label>' +
         '<button class="btn danger full" type="button" id="erase">Erase everything</button></div></section>';
@@ -521,6 +522,7 @@
         (IS_ANDROID ? '' : '<p class="lbl" style="margin-top:14px;line-height:1.5">Install Dues on your phone: open the browser menu and choose Add to Home screen.</p>') + '</section>';
       h += '</div>';
       $('#view').innerHTML = h;
+      window.DuesGate.wireSettings($('#acctCard'), window.DuesUI);
       var steps = s.steps.map(function (x) { return { days: x.days, tone: x.tone }; });
       function drawSteps() {
         $('#steps').innerHTML = steps.map(function (st, k) {
@@ -573,9 +575,10 @@
   /* ───────── account sheet ───────── */
   function paintUser(name) { if (name) ME.user.name = name; $('#who').textContent = (ME.user.name || '').split(' ')[0] || 'there'; $('#avatar').textContent = ME.user.name ? initials(ME.user.name) : '?'; }
   function accountSheet() {
-    var card = sheet('<div class="sheet-top"><div class="avatar" aria-hidden="true">' + initials(ME.user.name) + '</div><div class="sheet-who"><b>' + esc(ME.user.name || 'You') + '</b><span>Saved on this device</span>' +
+    var card = sheet('<div class="sheet-top"><div class="avatar" aria-hidden="true">' + initials(ME.user.name) + '</div><div class="sheet-who"><b>' + esc(ME.user.name || 'You') + '</b><span>' + esc(window.DuesGate.where()) + '</span>' +
       (ME.settings.business ? '<span class="chip" style="align-self:flex-start;margin-top:4px">' + esc(ME.settings.business) + '</span>' : '') + '</div><button class="x" type="button" data-close aria-label="Close">' + I.x + '</button></div>' +
-      '<div class="sheet-actions"><button class="btn ghost" type="button" id="st">Switch theme</button><button class="btn soft" type="button" id="sg">Settings</button><button class="btn solid" type="button" id="bk">Back up</button></div>');
+      '<div class="sheet-actions" style="flex-wrap:wrap"><button class="btn ghost" type="button" id="lk">Lock now</button><button class="btn ghost" type="button" id="st">Switch theme</button><button class="btn soft" type="button" id="sg">Settings</button><button class="btn solid" type="button" id="bk">Back up</button></div>');
+    $('#lk', card).onclick = function () { closeSheet(true); window.DuesGate.lockNow(); };
     $('#st', card).onclick = toggleTheme; $('#sg', card).onclick = function () { closeSheet(true); go('settings'); };
     $('#bk', card).onclick = function () { api('GET', '/api/backup').then(function (b) { saveFile('dues-backup-' + todayIst() + '.json', 'application/json', JSON.stringify(b)); }); };
   }
@@ -583,8 +586,8 @@
   /* ───────── first run ───────── */
   function welcome() {
     var card = sheet('<div class="sheet-top"><div class="sheet-who"><b>Welcome to Dues</b><span>Get paid without the awkward calls</span></div></div>' +
-      '<p class="lbl" style="line-height:1.6;margin:-6px 0 14px">Add an invoice and Dues lines up polite WhatsApp or email reminders before and after the due date, until it is paid. Everything stays on this phone.</p>' +
-      '<form class="form" id="wf" novalidate><label class="field"><span>Your name</span><input id="wn" maxlength="60" autocomplete="name" placeholder="Vashudev"></label>' +
+      '<p class="lbl" style="line-height:1.6;margin:-6px 0 14px">Add an invoice and Dues lines up polite WhatsApp or email reminders before and after the due date, until it is paid.</p>' +
+      '<form class="form" id="wf" novalidate><label class="field"><span>Your name</span><input id="wn" maxlength="60" autocomplete="name" placeholder="Vashudev" value="' + esc(ME.user.name || '') + '"></label>' +
       '<label class="field"><span>Business name</span><input id="wb" maxlength="80" autocomplete="organization" placeholder="Shown on reminders"></label>' +
       '<label class="field"><span>UPI ID</span><input id="wu" maxlength="60" autocapitalize="none" placeholder="yourname@okhdfcbank"><small>Clients see it in reminders so they can pay straight away. You can add it later.</small></label>' +
       '<p class="err" hidden></p><button class="btn solid full" type="submit">Start</button></form>');
@@ -599,7 +602,11 @@
 
   /* ───────── start ───────── */
   paintTheme();
-  api('GET', '/api/me').then(function (d) {
+  /* data changed on another phone and was merged in: draw it again (unless a form is open) */
+  window.addEventListener('dues:remote', function () {
+    api('GET', '/api/me').then(function (m) { ME = m; paintUser(); if (!$('#sheetRoot').innerHTML && view !== 'settings') render(); }).catch(function () { });
+  });
+  window.DuesGate.ready().then(function () { paintTheme(); return api('GET', '/api/me'); }).then(function (d) {
     ME = d; paintUser();
     var h = (location.hash || '').slice(1);
     go(['overview', 'invoices', 'followups', 'clients', 'settings'].indexOf(h) > -1 ? h : 'overview');

@@ -92,22 +92,39 @@
     return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   }
 
-  /* ───── storage ───── */
+  /* ───── storage ─────
+     The data lives in memory (DB). Every change is handed to a persist function: by default plain localStorage
+     (tests, or an old unlocked install); once the vault is open, the vault encrypts it and saves it (and syncs it).
+     lastGood is the last saved copy: a request that fails puts it back, so a failed request changes nothing. */
   var storage = root.localStorage;
-  var DB = null;
-  function blank() { return { v: 1, me: { name: '' }, settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), clients: [], invoices: [], payments: [], events: [], followups: [], nextEvent: 1, created: nowIso() }; }
+  var DB = null, lastGood = null, dirty = false, persistHook = null, changeHook = null;
+  function blank() { return { v: 1, me: { name: '' }, settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), clients: [], invoices: [], payments: [], events: [], followups: [], deleted: [], nextEvent: 1, created: nowIso(), updated_at: nowIso() }; }
+  function normal(d) {
+    if (!d || d.v !== 1) d = blank();
+    ['clients', 'invoices', 'payments', 'events', 'followups', 'deleted'].forEach(function (k) { if (!Array.isArray(d[k])) d[k] = []; });
+    if (!d.me) d.me = { name: '' };
+    return d;
+  }
   function load() {
     if (DB) return DB;
+    if (lastGood) { DB = normal(JSON.parse(lastGood)); return DB; }
     var raw = null;
     try { raw = storage.getItem(KEY); } catch (e) { }
-    try { DB = raw ? JSON.parse(raw) : blank(); } catch (e) { DB = blank(); }
-    if (!DB || DB.v !== 1) DB = blank();
-    ['clients', 'invoices', 'payments', 'events', 'followups'].forEach(function (k) { if (!Array.isArray(DB[k])) DB[k] = []; });
+    try { DB = normal(raw ? JSON.parse(raw) : null); } catch (e) { DB = blank(); }
+    lastGood = JSON.stringify(DB);
     return DB;
   }
-  function save() {
-    try { storage.setItem(KEY, JSON.stringify(DB)); }
-    catch (e) { throw HttpError(507, 'This phone is out of space for Dues data. Export a backup, then remove old paid invoices.'); }
+  function save() { dirty = true; load().updated_at = nowIso(); }
+  function commit() {
+    if (!dirty) return Promise.resolve();
+    dirty = false;
+    var snap = JSON.stringify(DB);
+    var done = new Promise(function (ok) {   // a throw here (even a synchronous one) rejects, so the request rolls back
+      if (persistHook) return ok(persistHook(snap));
+      try { storage.setItem(KEY, snap); } catch (e) { throw HttpError(507, 'This phone is out of space for Dues data. Export a backup, then remove old paid invoices.'); }
+      ok();
+    });
+    return done.then(function () { lastGood = snap; if (changeHook) changeHook(snap); });
   }
   function settingsOf() {
     var s = load().settings || {};
@@ -115,7 +132,7 @@
   }
   function logEvent(invoiceId, kind, detail) {
     var db = load();
-    db.events.push({ id: db.nextEvent++, invoice_id: invoiceId, kind: kind, detail: String(detail || '').slice(0, 300), created_at: nowIso() });
+    db.events.push({ id: uid(), invoice_id: invoiceId, kind: kind, detail: String(detail || '').slice(0, 300), created_at: nowIso() });
     if (db.events.length > 5000) db.events = db.events.slice(-4000);
   }
   var byId = function (list, id) { for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i]; return null; };
@@ -265,9 +282,9 @@
   function route(m, p, h) { routes.push([m, new RegExp('^' + p.replace(/:(\w+)/g, '(?<$1>[^/?]+)') + '$'), h]); }
 
   route('GET', '/api/me', function () { var db = load(); return { user: { name: db.me.name, username: 'Saved on this device', created_at: db.created }, settings: settingsOf(), setup_done: !!db.me.name, email_ready: false, razorpay_ready: false, local: true }; });
-  route('PATCH', '/api/me', function (b) { if ('name' in b) load().me.name = text(b.name, 60, 'Name', true); save(); return { ok: true }; });
+  route('PATCH', '/api/me', function (b) { var db = load(); if ('name' in b) { db.me.name = text(b.name, 60, 'Name', true); db.me.updated_at = nowIso(); } save(); return { ok: true }; });
   route('GET', '/api/settings', function () { return { settings: settingsOf() }; });
-  route('PUT', '/api/settings', function (b) { var s = cleanSettings(b, settingsOf()); load().settings = s; save(); return { settings: s }; });
+  route('PUT', '/api/settings', function (b) { var s = cleanSettings(b, settingsOf()); var db = load(); db.settings = s; db.settings_at = nowIso(); save(); return { settings: s }; });
   route('GET', '/api/summary', function () { planFollowups(istToday()); save(); return summary(); });
 
   route('GET', '/api/clients', function () {
@@ -295,13 +312,14 @@
     var c = byId(load().clients, p.id); if (!c) throw HttpError(404, 'Client not found.');
     var n = { name: 'name' in b ? text(b.name, 80, 'Name', true) : c.name, company: 'company' in b ? text(b.company, 80, 'Company') : c.company, phone: 'phone' in b ? phone(b.phone) : c.phone,
       email: 'email' in b ? email(b.email) : c.email, notes: 'notes' in b ? text(b.notes, 500, 'Notes') : c.notes };
-    Object.assign(c, n); save(); return { ok: true };
+    Object.assign(c, n, { updated_at: nowIso() }); save(); return { ok: true };
   });
   route('DELETE', '/api/clients/:id', function (b, p) {
     var db = load();
     if (db.invoices.some(function (i) { return i.client_id === p.id; })) throw HttpError(409, 'This client has invoices. Void or keep them; a client with invoices cannot be deleted.');
     var n = db.clients.length; db.clients = db.clients.filter(function (c) { return c.id !== p.id; });
     if (db.clients.length === n) throw HttpError(404, 'Client not found.');
+    db.deleted.push(p.id);
     save(); return { ok: true };
   });
 
@@ -379,6 +397,7 @@
     if (!pay) throw HttpError(404, 'Payment not found.');
     if (inv.status === 'void') throw HttpError(409, 'A void invoice cannot be changed.');
     db.payments = db.payments.filter(function (x) { return x !== pay; });
+    db.deleted.push(pay.id);
     Object.assign(inv, { paid: r2(inv.paid - pay.amount), status: 'open', paid_on: null, updated_at: nowIso() });
     logEvent(inv.id, 'payment_removed', money(pay.amount)); save();
     return shape(inv, istToday());
@@ -438,12 +457,12 @@
   });
   route('POST', '/api/followups/:id/sent', function (b, p) {
     var db = load(), f = byId(db.followups, p.id); if (!f) throw HttpError(404, 'Reminder not found.');
-    if (f.status === 'due') { f.status = 'sent'; f.sent_at = nowIso(); logEvent(f.invoice_id, 'reminder_sent', f.tone + ' · ' + f.channel); save(); }
+    if (f.status === 'due') { f.status = 'sent'; f.sent_at = nowIso(); f.updated_at = f.sent_at; logEvent(f.invoice_id, 'reminder_sent', f.tone + ' · ' + f.channel); save(); }
     return { ok: true };
   });
   route('POST', '/api/followups/:id/skip', function (b, p) {
     var f = byId(load().followups, p.id); if (!f || f.status !== 'due') throw HttpError(404, 'Reminder not found.');
-    f.status = 'skipped'; save(); return { ok: true };
+    f.status = 'skipped'; f.updated_at = nowIso(); save(); return { ok: true };
   });
   route('GET', '/api/activity', function () {
     var db = load();
@@ -455,24 +474,40 @@
   route('POST', '/api/restore', function (b) {
     var d = b && b.data;
     if (!d || d.v !== 1 || !Array.isArray(d.invoices) || !Array.isArray(d.clients)) throw HttpError(400, 'This is not a Dues backup file.');
-    DB = d; load(); save(); return { ok: true, invoices: d.invoices.length, clients: d.clients.length };
+    DB = normal(d); DB.reset_at = nowIso(); save(); return { ok: true, invoices: d.invoices.length, clients: d.clients.length };
   });
-  route('POST', '/api/erase', function () { DB = blank(); save(); return { ok: true }; });
+  route('POST', '/api/erase', function () { DB = blank(); DB.reset_at = nowIso(); save(); return { ok: true }; });
 
+  var queue = Promise.resolve();   // one request at a time, so saves never overlap
   function DuesAPI(method, path, body) {
-    return new Promise(function (resolve, reject) {
+    var run = queue.then(function () {
+      if (DuesAPI.locked) throw HttpError(423, 'Dues is locked.');
+      var out;
       try {
-        var u = new URL(path, 'https://dues.local');
-        for (var i = 0; i < routes.length; i++) {
+        load();
+        var u = new URL(path, 'https://dues.local'), hit = false;
+        for (var i = 0; i < routes.length && !hit; i++) {
           var r = routes[i]; if (r[0] !== method) continue;
           var m = r[1].exec(u.pathname); if (!m) continue;
-          var out = r[2](body || {}, m.groups || {}, u.searchParams);
-          return resolve(JSON.parse(JSON.stringify(out)));
+          hit = true; out = r[2](body || {}, m.groups || {}, u.searchParams);
         }
-        reject(HttpError(404, 'Unknown request.'));
-      } catch (e) { DB = null; reject(e.status ? e : HttpError(500, 'Something went wrong: ' + e.message)); }
+        if (!hit) throw HttpError(404, 'Unknown request.');
+      } catch (e) { DB = null; dirty = false; throw e.status ? e : HttpError(500, 'Something went wrong: ' + e.message); }
+      return commit().then(function () { return JSON.parse(JSON.stringify(out)); }, function (e) { DB = null; throw e.status ? e : HttpError(500, 'Could not save: ' + e.message); });
     });
+    queue = run.catch(function () { });
+    return run;
   }
-  DuesAPI.helpers = { istToday: istToday, addDays: addDays, daysBetween: daysBetween, money: money, fill: fill, parseCsv: parseCsv, phone: phone, b64uJson: b64uJson, reset: function () { DB = null; } };
+  DuesAPI.locked = false;
+  /* the vault calls this after unlocking: data in memory, and where to save changes */
+  DuesAPI.attach = function (data, persist, onChange) { DB = normal(data); lastGood = JSON.stringify(DB); dirty = false; persistHook = persist; changeHook = onChange || null; DuesAPI.locked = false; };
+  DuesAPI.detach = function () { DB = null; lastGood = null; dirty = false; persistHook = null; changeHook = null; DuesAPI.locked = true; };
+  DuesAPI.snapshot = function () { return JSON.parse(lastGood || JSON.stringify(load())); };
+  /* data from another device was merged in: show it without saving it back */
+  DuesAPI.replace = function (data) { return queue = queue.then(function () { DB = normal(data); lastGood = JSON.stringify(DB); dirty = false; }); };
+  DuesAPI.legacyPlain = function () { try { var raw = storage.getItem(KEY); return raw ? normal(JSON.parse(raw)) : null; } catch (e) { return null; } };
+  DuesAPI.dropLegacyPlain = function () { try { storage.removeItem(KEY); } catch (e) { } };
+  DuesAPI.blank = blank;
+  DuesAPI.helpers = { istToday: istToday, addDays: addDays, daysBetween: daysBetween, money: money, fill: fill, parseCsv: parseCsv, phone: phone, b64uJson: b64uJson, reset: function () { DB = null; lastGood = null; } };
   root.DuesAPI = DuesAPI;
 })(typeof window !== 'undefined' ? window : globalThis);

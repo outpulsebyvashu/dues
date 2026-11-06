@@ -1,10 +1,10 @@
 {
   "name": "dues",
   "private": true,
-  "version": "2.0.0",
-  "description": "Dues: follows up on unpaid invoices until they are paid. Static app (no server): data stays on the device.",
+  "version": "2.1.0",
+  "description": "Dues: follows up on unpaid invoices until they are paid. Static app: PIN-locked, encrypted on the device, optional Supabase accounts and sync.",
   "scripts": {
-    "test": "node tests/store.test.mjs",
+    "test": "node tests/store.test.mjs && node tests/security.test.mjs",
     "serve": "python3 -m http.server 8080 -d public"
   }
 }

@@ -5,7 +5,13 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyPermanentlyInvalidatedException
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -27,7 +33,16 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.ComponentActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
+import org.json.JSONObject
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
@@ -35,12 +50,14 @@ import androidx.webkit.WebViewAssetLoader
 
 /**
  * Dues for Android. The Dues web app (public/) is built into the APK and served from a private https address
- * (WebViewAssetLoader), so it works offline and needs no website; invoices are saved on the phone (WebView storage).
+ * (WebViewAssetLoader), so it works offline and needs no website; invoices are saved on the phone, encrypted with your PIN.
  * Native parts: WhatsApp, UPI apps, the dialer and email open in those apps; the file picker (CSV import, restore);
  * saving backups and CSV exports through Android's save dialog; the back button closes sheets first;
  * the status and navigation bars follow the app's light/dark theme.
+ * Security: screenshots and the recent-apps preview are blocked (FLAG_SECURE); fingerprint unlock keeps the vault's data key
+ * encrypted by a key in the Android Keystore that only opens after a successful fingerprint (BiometricPrompt + CryptoObject).
  */
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private lateinit var web: WebView
     private lateinit var root: FrameLayout
@@ -77,6 +94,108 @@ class MainActivity : ComponentActivity() {
                 try { savePicker.launch(i) } catch (e: ActivityNotFoundException) { Toast.makeText(this@MainActivity, "Can't save files on this phone", Toast.LENGTH_SHORT).show() }
             }
         }
+
+        /** True when the phone has a strong fingerprint/face sensor with something enrolled (Android 9+). */
+        @JavascriptInterface
+        fun bioAvailable(): Boolean =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+                BiometricManager.from(this@MainActivity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+
+        /** Turn fingerprint unlock on: after a fingerprint, the vault's data key is encrypted with the Keystore key and kept. */
+        @JavascriptInterface
+        fun bioEnroll(keyB64: String) { runOnUiThread { bioRun(enroll = true, plain = keyB64) } }
+
+        /** Fingerprint unlock: after a fingerprint, hand the data key back to the page. */
+        @JavascriptInterface
+        fun bioUnlock() { runOnUiThread { bioRun(enroll = false, plain = null) } }
+
+        @JavascriptInterface
+        fun bioClear() { bioForget() }
+    }
+
+    /* ───── fingerprint ───── */
+    private val bioPrefs by lazy { getSharedPreferences("dues_bio", MODE_PRIVATE) }
+
+    private fun bioKey(create: Boolean): SecretKey? {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getKey(BIO_ALIAS, null) as? SecretKey)?.let { return it }
+        if (!create) return null
+        val spec = KeyGenParameterSpec.Builder(BIO_ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .setUserAuthenticationRequired(true)
+            .setInvalidatedByBiometricEnrollment(true)
+            .apply {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+                else @Suppress("DEPRECATION") setUserAuthenticationValidityDurationSeconds(-1)
+            }
+            .build()
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply { init(spec) }.generateKey()
+    }
+
+    private fun bioForget() {
+        try { KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(BIO_ALIAS) } catch (e: Exception) { }
+        bioPrefs.edit().clear().apply()
+    }
+
+    private fun bioReply(ok: Boolean, key: String? = null, error: String? = null) {
+        val o = JSONObject().put("ok", ok)
+        if (key != null) o.put("key", key)
+        if (error != null) o.put("error", error)
+        web.evaluateJavascript("window.duesBio && window.duesBio(" + JSONObject.quote(o.toString()) + ")", null)
+    }
+
+    private fun bioRun(enroll: Boolean, plain: String?) {
+        val cipher: Cipher
+        try {
+            cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            if (enroll) {
+                bioForget()
+                cipher.init(Cipher.ENCRYPT_MODE, bioKey(create = true))
+            } else {
+                val iv = bioPrefs.getString("iv", null)
+                val key = bioKey(create = false)
+                if (iv == null || key == null) return bioReply(false, error = "Fingerprint unlock is off. Use your PIN.")
+                cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
+            }
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            bioForget()
+            return bioReply(false, error = "Your fingerprints changed. Use your PIN, then turn fingerprint unlock on again in Settings.")
+        } catch (e: Exception) {
+            return bioReply(false, error = "Fingerprint is not available right now. Use your PIN.")
+        }
+        val info = BiometricPrompt.PromptInfo.Builder()
+            .setTitle(if (enroll) "Turn on fingerprint unlock" else "Unlock Dues")
+            .setSubtitle(if (enroll) "Confirm it's you" else "Use your fingerprint")
+            .setNegativeButtonText("Use PIN")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .build()
+        val prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                val c = result.cryptoObject?.cipher ?: return bioReply(false, error = "Fingerprint failed. Use your PIN.")
+                try {
+                    if (enroll) {
+                        val ct = c.doFinal(Base64.decode(plain, Base64.NO_WRAP))
+                        bioPrefs.edit().putString("iv", Base64.encodeToString(c.iv, Base64.NO_WRAP)).putString("ct", Base64.encodeToString(ct, Base64.NO_WRAP)).apply()
+                        bioReply(true)
+                    } else {
+                        val raw = c.doFinal(Base64.decode(bioPrefs.getString("ct", ""), Base64.NO_WRAP))
+                        bioReply(true, key = Base64.encodeToString(raw, Base64.NO_WRAP))
+                        java.util.Arrays.fill(raw, 0)
+                    }
+                } catch (e: Exception) {
+                    if (enroll) bioForget()
+                    bioReply(false, error = "Fingerprint failed. Use your PIN.")
+                }
+            }
+            override fun onAuthenticationError(code: Int, msg: CharSequence) {
+                val cancelled = code == BiometricPrompt.ERROR_USER_CANCELED || code == BiometricPrompt.ERROR_NEGATIVE_BUTTON || code == BiometricPrompt.ERROR_CANCELED
+                if (enroll) bioForget()
+                bioReply(false, error = if (cancelled) null else msg.toString())
+            }
+        })
+        prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))
     }
 
     private val filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -87,6 +206,8 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // no screenshots, screen recording or recent-apps preview of invoices and the PIN pad
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         WindowCompat.setDecorFitsSystemWindows(window, true)
         host = Uri.parse(BuildConfig.START_URL).host ?: ""
         assets = WebViewAssetLoader.Builder().addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this)).build()
@@ -279,5 +400,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private val BG_LIGHT = Color.parseColor("#E9E9E9")
+        private const val BIO_ALIAS = "dues_bio_v1"
     }
 }

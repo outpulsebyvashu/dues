@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://*.supabase.in; object-src 'none'; base-uri 'none'; form-action 'self'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#e9e9e9">
 <title>Dues</title>
@@ -14,7 +16,7 @@
 <link rel="stylesheet" href="dues.css">
 </head>
 <body>
-<script>try{if(localStorage.getItem('dues_theme')==='dark')document.body.classList.add('dark')}catch(e){}</script>
+<script src="theme.js"></script>
 <div class="app">
   <header class="top">
     <button class="avatar" id="avatar" type="button" aria-label="Your account" aria-haspopup="dialog">?</button>
@@ -40,7 +42,11 @@
 </div>
 <div id="sheetRoot"></div>
 <div class="toast" id="toast" role="status"></div>
+<script src="config.js"></script>
 <script src="store.js"></script>
+<script src="vault.js"></script>
+<script src="cloud.js"></script>
+<script src="gate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

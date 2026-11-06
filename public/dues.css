@@ -288,3 +288,44 @@ body.dark .toast{background:var(--lime);color:var(--forest)}
 }
 @media(max-width:380px){.two{grid-template-columns:1fr}.actions{padding-right:0}.actions .btn{flex:1}.fab{display:none}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ═══ GATE: sign in, create account, PIN lock (same cards, pills and lime as the app) ═══ */
+body.gated{overflow:hidden}
+.gate{position:fixed;inset:0;z-index:80;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch;padding:max(20px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(24px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));display:flex}
+.gate-in{width:100%;max-width:420px;margin:auto;display:flex;flex-direction:column;gap:12px}
+.gate-brand{display:flex;align-items:center;gap:10px;padding:4px 4px 6px}
+.gate-brand img{width:40px;height:40px;border-radius:12px}
+.gate-brand b{font-size:22px;font-weight:500;letter-spacing:-.02em;flex:1}
+.gate-brand .round{width:40px;height:40px}
+.gate h1{font-size:clamp(30px,9vw,40px);font-weight:300;letter-spacing:-.03em;line-height:1.05;margin:4px 0 10px;position:relative}
+.gate .c-lime p{position:relative;line-height:1.5}
+.gate .links{display:flex;justify-content:center;gap:18px;flex-wrap:wrap;padding:4px 0}
+.gate .links button{font-size:13px;color:var(--muted);text-decoration:underline;text-underline-offset:3px;padding:6px 2px}
+.gate .okmsg{font-size:13px;line-height:1.5;color:var(--pos)}
+.gate .err{font-size:13px;color:var(--neg);line-height:1.4}
+.pw{position:relative}
+.pw input{padding-right:64px}
+.pw button{position:absolute;right:6px;top:50%;transform:translateY(-50%);height:32px;padding:0 12px;border-radius:999px;background:var(--chip);font-size:12px}
+.lock-card{text-align:center;padding:26px 20px 22px}
+.lock-card .avatar{margin:0 auto 12px;width:60px;height:60px;font-size:20px;cursor:default}
+.lock-card h2{font-size:20px;font-weight:400;margin-bottom:4px}
+.pin-dots{display:flex;gap:14px;justify-content:center;margin:22px 0 6px;height:16px}
+.pin-dots i{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--ink);transition:background .15s,transform .15s}
+.pin-dots i.on{background:var(--ink);transform:scale(1.05)}
+.pin-dots.shake{animation:pinShake .35s}
+@keyframes pinShake{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}
+.pin-msg{min-height:20px;font-size:13px;color:var(--muted);margin-top:8px}
+.pin-msg.bad{color:var(--neg)}
+.pad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:10px}
+.pad button{height:62px;border-radius:999px;background:var(--chip);font-size:24px;font-weight:300;display:flex;align-items:center;justify-content:center;transition:transform .1s,background .15s}
+.pad button:active{transform:scale(.94);background:var(--line)}
+.pad button.k{background:none}
+.pad button svg{width:24px;height:24px}
+.pad button:disabled{opacity:.35}
+.toggle{width:46px;height:28px;border-radius:999px;background:var(--track);position:relative;flex-shrink:0;transition:background .2s}
+.toggle::after{content:'';position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .2s}
+.toggle[aria-checked=true]{background:var(--forest)}
+body.dark .toggle[aria-checked=true]{background:var(--lime)}
+body.dark .toggle[aria-checked=true]::after{background:var(--forest)}
+.toggle[aria-checked=true]::after{transform:translateX(18px)}
+@media (prefers-reduced-motion:reduce){.pin-dots.shake{animation:none}}
